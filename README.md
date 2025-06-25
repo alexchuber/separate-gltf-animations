@@ -1,6 +1,6 @@
 # glTF Animation Separator
 
-A script to separate animations from a glTF into different, animation-only files.
+A sample script demonstrating how to break up a glTF with animations into different logical pieces: one base model glTF containing the scene hierarchy, geometry, materials, and textures, plus separate animation-only glTF files. These separated files require custom loading logic to be properly used together - see https://playground.babylonjs.com/#KOXM7J#3 for an example implementation.
 
 ## Quick Start
 
@@ -64,7 +64,7 @@ Modify `src/config.ts` to change input/output paths and animation mapping patter
 ## Technical Details
 
 ### Using the outputs
-The animation chunks reference node indices that don't exist in the chunk files themselves. This is intentional - they're designed to be loaded alongside the base model by custom loading code that can reconcile the node references. See https://playground.babylonjs.com/#KOXM7J#3 for an example.
+The animation chunks reference node indices that don't exist in the chunk files themselves. This is intentional - they're designed to be loaded alongside the base model by custom loading code that can reconcile the node references.
 
 ### Processing Pipeline
 1. Groups animations by matching names against regex patterns or lists
