@@ -1,10 +1,11 @@
 import { Accessor, Animation, Document, NodeIO, Property, PropertyType } from '@gltf-transform/core';
 import { Extension, WriterContext } from '@gltf-transform/core';
-import { copyToDocument, createDefaultPropertyResolver, partition } from '@gltf-transform/functions';
-import { KHRONOS_EXTENSIONS } from '@gltf-transform/extensions';
+import { copyToDocument, createDefaultPropertyResolver, prune, quantize, reorder, resample } from '@gltf-transform/functions';
+import { ALL_EXTENSIONS, EXTMeshoptCompression } from '@gltf-transform/extensions';
 import fs from 'fs';
 import path from 'path';
 import { CONFIG, AnimationSeparatorConfig } from './config.js';
+import { MeshoptDecoder, MeshoptEncoder } from 'meshoptimizer';
 
 export class AnimationTargetPatcher extends Extension {
 	static EXTENSION_NAME = 'AnimationTargetPatcher';
@@ -221,12 +222,52 @@ async function writeDoc(io: NodeIO, document: Document, outputPath: string, file
     fs.mkdirSync(joinedOutputPath, { recursive: true });
     joinedOutputPath = path.join(joinedOutputPath, `${fileName}.${config.outputGlb ? 'glb' : 'gltf'}`);
     
+    // Optimization steps
+    await document.transform(
+        resample({
+            cleanup: false,
+        }),
+        reorder({
+            encoder: MeshoptEncoder, 
+            target: 'size',
+            cleanup: false,
+        }),
+        quantize({
+            quantizationVolume: 'mesh',
+            quantizePosition: 14,
+            quantizeNormal: 8, // 10,
+            quantizeTexcoord: 12,
+            quantizeColor: 8,
+            quantizeWeight: 8,
+            quantizeGeneric: 12,
+            normalizeWeights: true,
+            cleanup: false
+        }),
+        prune({
+            propertyTypes: [PropertyType.ACCESSOR],
+        })
+    );
+
+    document
+        .createExtension(EXTMeshoptCompression)
+        .setRequired(true)
+        .setEncoderOptions({
+            method: EXTMeshoptCompression.EncoderMethod.FILTER,
+        });
 
     await io.write(joinedOutputPath, document);
 }
 
 async function transformGltf(inputPath: string, outputPath: string, chunkMap: Record<string, string | string[]>, config: AnimationSeparatorConfig) {
-    const io = new NodeIO().registerExtensions([...KHRONOS_EXTENSIONS, AnimationTargetPatcher]);
+    await MeshoptDecoder.ready;
+    await MeshoptEncoder.ready;
+
+    const io = new NodeIO()
+        .registerExtensions([...ALL_EXTENSIONS, AnimationTargetPatcher])
+        .registerDependencies({ 'meshopt.decoder': MeshoptDecoder })
+        .registerDependencies({ 'meshopt.encoder': MeshoptEncoder });
+
+
     const srcDoc = await io.read(inputPath);
     
     const separator = new AnimationSeparator(srcDoc, chunkMap);

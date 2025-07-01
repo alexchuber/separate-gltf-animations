@@ -10,7 +10,8 @@
   "dependencies": {
     "@gltf-transform/core": "^4.2.0",
     "@gltf-transform/extensions": "^4.2.0",
-    "@gltf-transform/functions": "^4.2.0"
+    "@gltf-transform/functions": "^4.2.0",
+    "meshoptimizer": "^0.24.0"
   },
   "devDependencies": {
     "@types/node": "^24.0.3",
