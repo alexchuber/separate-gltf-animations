@@ -3,9 +3,9 @@
   "version": "1.0.0",
   "description": "A pipeline to separate glTF animations into different files.",
   "type": "module",
-  "main": "dist/separate-animations.js",
+  "main": "dist/index.js",
   "scripts": {
-    "start": "tsc && node dist/separate-animations.js"
+    "start": "tsc && node dist/index.js"
   },
   "dependencies": {
     "@gltf-transform/core": "^4.2.0",
