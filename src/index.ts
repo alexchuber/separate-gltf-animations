@@ -1,11 +1,11 @@
 
 import { Document, NodeIO, PropertyType } from '@gltf-transform/core';
-import { prune, quantize, reorder, resample } from '@gltf-transform/functions';
+import { prune, quantize, reorder, resample, weld, simplify, dedup } from '@gltf-transform/functions';
 import { ALL_EXTENSIONS, EXTMeshoptCompression } from '@gltf-transform/extensions';
 import fs from 'fs';
 import path from 'path';
 import { CONFIG, AnimationSeparatorConfig } from './config.js';
-import { MeshoptDecoder, MeshoptEncoder } from 'meshoptimizer';
+import { MeshoptDecoder, MeshoptEncoder, MeshoptSimplifier } from 'meshoptimizer';
 import { AnimationSeparator, AnimationTargetPatcher } from './separate-animations.js';
 
 
@@ -16,39 +16,6 @@ async function writeDoc(io: NodeIO, document: Document, outputPath: string, file
     }
     fs.mkdirSync(joinedOutputPath, { recursive: true });
     joinedOutputPath = path.join(joinedOutputPath, `${fileName}.${config.outputGlb ? 'glb' : 'gltf'}`);
-    
-    // Optimization steps
-    await document.transform(
-        resample({
-            cleanup: false,
-        }),
-        reorder({
-            encoder: MeshoptEncoder, 
-            target: 'size',
-            cleanup: false,
-        }),
-        quantize({
-            quantizationVolume: 'mesh',
-            quantizePosition: 14,
-            quantizeNormal: 8, // 10,
-            quantizeTexcoord: 12,
-            quantizeColor: 8,
-            quantizeWeight: 8,
-            quantizeGeneric: 12,
-            normalizeWeights: true,
-            cleanup: false
-        }),
-        prune({
-            propertyTypes: [PropertyType.ACCESSOR],
-        })
-    );
-
-    document
-        .createExtension(EXTMeshoptCompression)
-        .setRequired(true)
-        .setEncoderOptions({
-            method: EXTMeshoptCompression.EncoderMethod.FILTER,
-        });
 
     await io.write(joinedOutputPath, document);
 }
@@ -76,12 +43,19 @@ async function transformGltf(inputPath: string, outputPath: string, chunkMap: Re
     // // Prune
     // srcDoc.transform(prune());
     
+    // Separate animations
     const separator = new AnimationSeparator(srcDoc, chunkMap);
     const { baseDoc, chunkDocs } = await separator.separate();
 
-    // Optimization steps
+    // Optimize
     for (const doc of [baseDoc, ...chunkDocs.values()]) {
         await doc.transform(
+            weld(),
+            simplify({
+                simplifier: MeshoptSimplifier,
+                ratio: 1, 
+                error: 0.01
+            }),
             resample({
                 cleanup: false,
             }),
@@ -91,9 +65,9 @@ async function transformGltf(inputPath: string, outputPath: string, chunkMap: Re
                 cleanup: false,
             }),
             quantize({
-                quantizationVolume: 'mesh',
+                pattern: /^(?!(?:POSITION|TEX_COORD)$).+/, // Same as -vpf and -vtf
                 quantizePosition: 14,
-                quantizeNormal: 8, // 10,
+                quantizeNormal: 8,
                 quantizeTexcoord: 12,
                 quantizeColor: 8,
                 quantizeWeight: 8,
@@ -102,9 +76,20 @@ async function transformGltf(inputPath: string, outputPath: string, chunkMap: Re
                 cleanup: false
             }),
             prune({
-                propertyTypes: [PropertyType.ACCESSOR],
-            })
+                propertyTypes: [PropertyType.ACCESSOR, PropertyType.MESH, PropertyType.ANIMATION_SAMPLER],
+            }),
+            dedup({
+                keepUniqueNames: true,
+            }),
         );
+
+        
+        doc
+            .createExtension(EXTMeshoptCompression) 
+            .setRequired(true)
+            .setEncoderOptions({
+                method: EXTMeshoptCompression.EncoderMethod.FILTER, // Same as -cc
+            });
     }
 
     // Write the base document (model without extracted animations)
