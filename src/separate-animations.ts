@@ -44,7 +44,6 @@ export class AnimationTargetPatcher extends Extension {
 export class AnimationSeparator {
     private sourceDoc: Document;
     private animationMap: Record<string, string | string[]>;
-    private targetCache = new Map<string, Map<number, number>>();
 
     constructor(sourceDoc: Document, animationMap: Record<string, string | string[]>) {
         this.sourceDoc = sourceDoc;
@@ -54,13 +53,12 @@ export class AnimationSeparator {
     async separate(): Promise<{ baseDoc: Document; chunkDocs: Map<string, Document> }> {
         // 1. Group animations by chunk patterns
         const { chunkMap, baseAnimations, unmatchedAnimations } = this.categorizeAnimations();
-        const chunkAnimations = Array.from(new Set(Array.from(chunkMap.values()).flat()));
 
         // 2. Cull unused animations from the source document
         this.disposeAnimations(unmatchedAnimations);
         
         // 2. Cache target node indices before clearing them
-        this.cacheTargetIndices(chunkAnimations);
+        AnimationTargetPatcher.AnimationTargetMap = buildAnimationNodeMap(this.sourceDoc);
         
         // 3. Create chunk documents and copy animations
         const chunkDocuments = this.createChunkDocuments(chunkMap);
@@ -164,36 +162,6 @@ export class AnimationSeparator {
             unmatchedAnimations: unmatchedAnimations
         };
     }
-
-    private cacheTargetIndices(animations: Animation[]): void {
-        const allNodes = this.sourceDoc.getRoot().listNodes();
-        
-        animations.forEach(animation => {
-            const animName = animation.getName();
-            if (!animName) return;
-
-            const channelMap = new Map<number, number>();
-            animation.listChannels().forEach((channel, index) => {
-                const targetNode = channel.getTargetNode();
-
-                if (targetNode) {
-                    const nodeIndex = allNodes.indexOf(targetNode);
-                    if (nodeIndex !== -1) {
-                        channelMap.set(index, nodeIndex);
-                    }
-                }
-
-                channel.setTargetNode(null);
-            });
-            
-            if (channelMap.size > 0) {
-                this.targetCache.set(animName, channelMap);
-            }
-        });
-
-        // Store in static property for the extension
-        AnimationTargetPatcher.AnimationTargetMap = this.targetCache;
-    }
     
     private createChunkDocuments(chunks: Map<string, Animation[]>): Map<string, Document> {
         const documents: Map<string, Document> = new Map();
@@ -207,4 +175,35 @@ export class AnimationSeparator {
 
         return documents;
     }
+}
+
+// Build a map of animation names -> channels, and channel -> target node index
+export function buildAnimationNodeMap(srcDoc: Document): Map<string, Map<number, number>> {
+    const animationNodeMap = new Map<string, Map<number, number>>();
+    const allNodes = srcDoc.getRoot().listNodes();
+    
+    srcDoc.getRoot().listAnimations().forEach(animation => {
+        const animName = animation.getName();
+        if (!animName) return;
+
+        const channelMap = new Map<number, number>();
+        animation.listChannels().forEach((channel, index) => {
+            const targetNode = channel.getTargetNode();
+
+            if (targetNode) {
+                const nodeIndex = allNodes.indexOf(targetNode);
+                if (nodeIndex !== -1) {
+                    channelMap.set(index, nodeIndex);
+                }
+            }
+
+            channel.setTargetNode(null);
+        });
+        
+        if (channelMap.size > 0) {
+            animationNodeMap.set(animName, channelMap);
+        }
+    });
+
+    return animationNodeMap;
 }
