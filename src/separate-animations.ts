@@ -1,6 +1,7 @@
 import { Accessor, Animation, Document, Property, PropertyType } from '@gltf-transform/core';
 import { Extension, WriterContext } from '@gltf-transform/core';
 import { copyToDocument, createDefaultPropertyResolver } from '@gltf-transform/functions';
+import { disposeAnimations } from './removeAnimations.js';
 
 export class AnimationTargetPatcher extends Extension {
 	static EXTENSION_NAME = 'AnimationTargetPatcher';
@@ -55,7 +56,11 @@ export class AnimationSeparator {
         const { chunkMap, baseAnimations, unmatchedAnimations } = this.categorizeAnimations();
 
         // 2. Cull unused animations from the source document
-        this.disposeAnimations(unmatchedAnimations);
+        this.sourceDoc.transform(
+            disposeAnimations({
+                animations: unmatchedAnimations
+            })
+        );
         
         // 2. Cache target node indices before clearing them
         AnimationTargetPatcher.AnimationTargetMap = buildAnimationNodeMap(this.sourceDoc);
@@ -65,7 +70,11 @@ export class AnimationSeparator {
 
         // 4. Remove all animations, apart from base animations, from the source document
         const animationsToDispose = this.sourceDoc.getRoot().listAnimations().filter(anim => !baseAnimations.includes(anim));
-        this.disposeAnimations(animationsToDispose);
+        this.sourceDoc.transform(
+            disposeAnimations({
+                animations: animationsToDispose
+            })
+        );
 
         // 5. Give each doc the AnimationTargetPatcher extension
         this.sourceDoc.createExtension(AnimationTargetPatcher);
@@ -77,35 +86,6 @@ export class AnimationSeparator {
             baseDoc: this.sourceDoc,
             chunkDocs: chunkDocuments
         };
-    }
-
-    private disposeAnimations(unusedAnimations: Animation[]): void {
-        const referencedAccessors = new Set<Accessor>();
-        const referencedSamplers = new Set<Property>();
-
-        // Collect all accessors referenced by unused animations
-        unusedAnimations.forEach(anim => {
-            anim.listSamplers().forEach(sampler => {
-                referencedSamplers.add(sampler);
-                const input = sampler.getInput();
-                const output = sampler.getOutput();
-                if (input) referencedAccessors.add(input);
-                if (output) referencedAccessors.add(output);
-            });
-        });
-        
-        // Filter list of accessors to cull, so we don't remove accessors that are shared with kept animations
-        const accessorsToCull = Array.from(referencedAccessors).filter(accessor => 
-            accessor.listParents().every(parent => parent.propertyType == PropertyType.ROOT || referencedSamplers.has(parent) )
-        );
-
-        // Finally, dispose of the unused animations, their unique accessors, and their buffer data
-        accessorsToCull.forEach(accessor => {
-            accessor.dispose();
-        });
-        unusedAnimations.forEach(animation => {
-            animation.dispose();
-        });
     }
 
     private categorizeAnimations(): { chunkMap: Map<string, Animation[]>; baseAnimations: Animation[]; unmatchedAnimations: Animation[] } {
