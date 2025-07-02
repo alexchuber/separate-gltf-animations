@@ -4,23 +4,78 @@ import { prune, quantize, reorder, resample, weld, simplify, dedup } from '@gltf
 import { ALL_EXTENSIONS, EXTMeshoptCompression } from '@gltf-transform/extensions';
 import fs from 'fs';
 import path from 'path';
-import { CONFIG, AnimationSeparatorConfig } from './config.js';
+import { CONFIG } from './config.js';
 import { MeshoptDecoder, MeshoptEncoder, MeshoptSimplifier } from 'meshoptimizer';
-import { AnimationSeparator, AnimationTargetPatcher } from './separate-animations.js';
+import { AnimationTargetPatcher } from './extensions/animationTargetPatcher.js';
+import { meshoptCompress } from './transforms/meshoptCompress.js';
+import { copyAnimations } from './transforms/copyAnimations.js';
+import { filterAnimations } from './transforms/filterAnimations.js';
 
+async function applyPreProcessing(doc: Document) {
+    return doc.transform(
+        // Start with a clean source document
+        prune(),
+    );
+}
 
-async function writeDoc(io: NodeIO, document: Document, outputPath: string, fileName: string, config: AnimationSeparatorConfig) {
+async function applyPostProcessing(doc: Document) {
+    return doc.transform(
+        // Begin gltfpack-like processing steps
+        weld(),
+        simplify({
+            simplifier: MeshoptSimplifier,
+            ratio: 1, 
+            error: 0.01,
+            // cleanup: false,
+        }),
+        resample({
+            cleanup: false,
+        }),
+        reorder({
+            encoder: MeshoptEncoder, 
+            target: 'size',
+            cleanup: false,
+        }),
+        quantize({
+            pattern: /^(?!(?:POSITION|TEX_COORD)$).+/, // Same as -vpf and -vtf
+            quantizePosition: 14,
+            quantizeNormal: 8,
+            quantizeTexcoord: 12,
+            quantizeColor: 8,
+            quantizeWeight: 8,
+            quantizeGeneric: 12,
+            normalizeWeights: true,
+            cleanup: false
+        }),
+        meshoptCompress({
+            method: EXTMeshoptCompression.EncoderMethod.FILTER, // Same as -cc
+        }),
+
+        // Insert more transforms here as needed
+        
+        // Begin cleanup here, on our own terms, because the above transforms may try to remove "unreferenced" animations that we want to keep
+        prune({
+            propertyTypes: [PropertyType.ACCESSOR, PropertyType.MESH, PropertyType.ANIMATION_SAMPLER],
+        }),
+        dedup({
+            keepUniqueNames: true,
+        }),
+    );
+}
+
+async function writeDoc(io: NodeIO, document: Document, outputPath: string, fileName: string) {
     let joinedOutputPath = outputPath;
-    if (config.outputSeparateFolders) {
+    if (CONFIG.outputSeparateFolders) {
         joinedOutputPath = path.join(joinedOutputPath, fileName);
     }
     fs.mkdirSync(joinedOutputPath, { recursive: true });
-    joinedOutputPath = path.join(joinedOutputPath, `${fileName}.${config.outputGlb ? 'glb' : 'gltf'}`);
+    joinedOutputPath = path.join(joinedOutputPath, `${fileName}.${CONFIG.outputGlb ? 'glb' : 'gltf'}`);
 
     await io.write(joinedOutputPath, document);
 }
 
-async function transformGltf(inputPath: string, outputPath: string, chunkMap: Record<string, string | string[]>, config: AnimationSeparatorConfig) {
+async function main() {
+    // Read and prepare source file
     await MeshoptDecoder.ready;
     await MeshoptEncoder.ready;
 
@@ -29,88 +84,39 @@ async function transformGltf(inputPath: string, outputPath: string, chunkMap: Re
         .registerDependencies({ 'meshopt.decoder': MeshoptDecoder })
         .registerDependencies({ 'meshopt.encoder': MeshoptEncoder });
 
+    const srcDoc = await io.read(CONFIG.inputFile);
 
-    const srcDoc = await io.read(inputPath);
+    applyPreProcessing(srcDoc);
 
-    // // Remove accessories
-    // srcDoc.getRoot().listNodes().forEach(node => {
-    //     const name = node.getName();
-    //     if (name && config.accessories.some(accessory => new RegExp(accessory, 'i').test(name))) {
-    //         console.log(`Removing accessory node: ${name}`);
-    //         node.dispose();
-    //     }
-    // });
-    // // Prune
-    // srcDoc.transform(prune());
-    
-    // Separate animations
-    const separator = new AnimationSeparator(srcDoc, chunkMap);
-    const { baseDoc, chunkDocs } = await separator.separate();
+    // Animation-only documents
+    for (const [name, pattern] of Object.entries(CONFIG.animationMap)) {
+        if (name === "Base") continue;
 
-    // Optimize
-    for (const doc of [baseDoc, ...chunkDocs.values()]) {
+        const doc = new Document();
         await doc.transform(
-            weld(),
-            simplify({
-                simplifier: MeshoptSimplifier,
-                ratio: 1, 
-                error: 0.01
-            }),
-            resample({
-                cleanup: false,
-            }),
-            reorder({
-                encoder: MeshoptEncoder, 
-                target: 'size',
-                cleanup: false,
-            }),
-            quantize({
-                pattern: /^(?!(?:POSITION|TEX_COORD)$).+/, // Same as -vpf and -vtf
-                quantizePosition: 14,
-                quantizeNormal: 8,
-                quantizeTexcoord: 12,
-                quantizeColor: 8,
-                quantizeWeight: 8,
-                quantizeGeneric: 12,
-                normalizeWeights: true,
-                cleanup: false
-            }),
-            prune({
-                propertyTypes: [PropertyType.ACCESSOR, PropertyType.MESH, PropertyType.ANIMATION_SAMPLER],
-            }),
-            dedup({
-                keepUniqueNames: true,
+            copyAnimations({
+                source: srcDoc,
+                pattern,
             }),
         );
-
-        
-        doc
-            .createExtension(EXTMeshoptCompression) 
-            .setRequired(true)
-            .setEncoderOptions({
-                method: EXTMeshoptCompression.EncoderMethod.FILTER, // Same as -cc
-            });
+        await applyPostProcessing(doc);
+        await writeDoc(io, doc, CONFIG.outputPath, name);
     }
 
-    // Write the base document (model without extracted animations)
-    await writeDoc(io, baseDoc, outputPath, path.basename(inputPath, path.extname(inputPath)), config);
-
-    // Write each animation chunk
-    for (const [name, doc] of chunkDocs) {
-        await writeDoc(io, doc, outputPath, name, config);
-    }
+    // Base model document
+    await srcDoc.transform(
+        filterAnimations({ pattern: CONFIG.animationMap.Base }),
+    );
+    await applyPostProcessing(srcDoc);
+    await writeDoc(io, srcDoc, CONFIG.outputPath, path.basename(CONFIG.inputFile, path.extname(CONFIG.inputFile)));
 }
 
 
-async function main() {
-    try {
-        console.log(`Transforming GLTF...\n`);
-        await transformGltf(CONFIG.inputFile, CONFIG.outputPath, CONFIG.animationMap, CONFIG);
-        console.log("\nGLTF transformation complete.");
-    } catch (error) {
-        console.error("An error occurred during the transformation process:", error);
-        process.exit(1);
-    }
+try {
+    console.log(`Transforming GLTF...\n`);
+    await main();
+    console.log("\nGLTF transformation complete.");
+} catch (error) {
+    console.error("An error occurred during the transformation process:", error);
+    process.exit(1);
 }
-
-main();
