@@ -1,30 +1,22 @@
 /**
- * Configuration for the glTF Animation Separator
+ * Configuration for the glTF animation separator script
  */
-export interface AnimationSeparatorConfig {
+export const CONFIG = {
   /** Path to the input glTF or GLB file */
-  inputFile: string;
+  inputFile: "inputs/MorphStressTest.glb",
+
   /** Directory where output files will be saved */
-  outputPath: string;
+  outputPath: "output/MorphStressTest",
+
   /** Whether to output in GLB format (true) or glTF format (false) */
-  outputGlb: boolean;
+  outputGlb: true,
+
   /** Whether to save each output file in its own folder */
-  outputSeparateFolders: boolean;
+  outputSeparateFolders: true,
+
   /** Animation name patterns mapped to output filenames, represented either as list or regex */
   /** Use the key 'Base' to specify animations to have in base model file */
-  animationMap: Record<string, string | string[]>;
-}
-
-/**
- * Default configuration - modify these values as needed
- */
-export const CONFIG: AnimationSeparatorConfig = {
-  inputFile: "inputs/MorphStressTest.glb",
-  outputPath: "output/MorphStressTest",
-  outputGlb: true,
-  outputSeparateFolders: true,
   animationMap: {
-    // Only these animations will remain in the base output file
     "Base": [
         "TheWave",
     ],
@@ -36,4 +28,4 @@ export const CONFIG: AnimationSeparatorConfig = {
     // Can use regex to match multiple animations
     "Wave": "^TheWave*",
   },
-} as const;
+};
