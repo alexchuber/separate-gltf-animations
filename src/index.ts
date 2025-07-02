@@ -13,23 +13,23 @@ import { filterAnimations } from './transforms/filterAnimations.js';
 
 async function applyPreProcessing(sourceDoc: Document) {
     return sourceDoc.transform(
-        // Start with a clean source document
+        // Start with a clean source document. This is needed, but not 100% why. It has something to do with what prune() can remove in postprocessing steps.
         prune(),
     );
 }
 
 async function applyPostProcessing(doc: Document) {
     return doc.transform(
-        // Begin gltfpack-like processing steps
-        weld(),
+        // Begin gltfpack-like processing steps.
+        weld(),                                                     // Needed for simplify() to work properly
         simplify({
             simplifier: MeshoptSimplifier,
-            ratio: 1, 
+            ratio: 1,                                               // Default ratio is 1, which means no simplification. Adjust as needed.
             error: 0.01,
             // cleanup: false,
         }),
         resample({
-            cleanup: false,
+            cleanup: false,                 
         }),
         reorder({
             encoder: MeshoptEncoder, 
@@ -37,7 +37,7 @@ async function applyPostProcessing(doc: Document) {
             cleanup: false,
         }),
         quantize({
-            pattern: /^(?!(?:POSITION|TEX_COORD)$).+/, // Same as -vpf and -vtf
+            pattern: /^(?!(?:POSITION|TEX_COORD)$).+/,              // Same as -vpf and -vtf
             quantizePosition: 14,
             quantizeNormal: 8,
             quantizeTexcoord: 12,
@@ -48,12 +48,14 @@ async function applyPostProcessing(doc: Document) {
             cleanup: false
         }),
         meshoptCompress({
-            method: EXTMeshoptCompression.EncoderMethod.FILTER, // Same as -cc
+            method: EXTMeshoptCompression.EncoderMethod.FILTER,     // Same as -cc
         }),
 
         // Insert more transforms here as needed
         
-        // Begin cleanup here, on our own terms, because the above transforms may try to remove "unreferenced" animations that we want to keep
+        // Begin cleanup here, on our own terms, because the above transforms 
+        // may have created new "unreferenced" properties that we want to remove,
+        // but we don't want it to remove our unreferenced animations
         prune({
             propertyTypes: [PropertyType.ACCESSOR, PropertyType.MESH, PropertyType.ANIMATION_SAMPLER],
         }),
