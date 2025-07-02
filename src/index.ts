@@ -11,8 +11,8 @@ import { meshoptCompress } from './transforms/meshoptCompress.js';
 import { copyAnimations } from './transforms/copyAnimations.js';
 import { filterAnimations } from './transforms/filterAnimations.js';
 
-async function applyPreProcessing(doc: Document) {
-    return doc.transform(
+async function applyPreProcessing(sourceDoc: Document) {
+    return sourceDoc.transform(
         // Start with a clean source document
         prune(),
     );
